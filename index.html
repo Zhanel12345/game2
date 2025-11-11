@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Мемо Сандар</title>
+  <style>
+    body {
+      font-family: 'Comic Sans MS', cursive, sans-serif;
+      background-color: #e0f2e9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      color: #2e7d32;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    #game-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 20px 0;
+      width: 320px;
+      height: 320px;
+    }
+
+    .cell {
+      background-color: #a5d6a7;
+      border: 3px solid #4caf50;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      font-weight: bold;
+      cursor: pointer;
+      user-select: none;
+      transition: transform 0.3s, background-color 0.3s;
+      aspect-ratio: 1 / 1;
+    }
+
+    .cell.hidden {
+      background-color: #81c784;
+      color: transparent;
+      cursor: pointer;
+    }
+
+    .cell.revealed {
+      animation: reveal 0.4s ease-out forwards;
+      cursor: default;
+    }
+
+    @keyframes reveal {
+      0% { transform: scale(0.7); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; color: white; }
+    }
+
+    button {
+      font-family: 'Comic Sans MS', cursive, sans-serif;
+      font-size: 1.4rem;
+      padding: 12px 24px;
+      background-color: #4caf50;
+      color: white;
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+
+    button:hover {
+      background-color: #388e3c;
+      transform: scale(1.05);
+    }
+
+    #modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.6);
+      justify-content: center;
+      align-items: center;
+      z-index: 10;
+    }
+
+    #modal-content {
+      background-color: #c8e6c9;
+      padding: 30px;
+      border-radius: 20px;
+      text-align: center;
+      font-size: 1.5rem;
+      max-width: 80%;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+    }
+
+    #modal button {
+      margin-top: 20px;
+      font-size: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Сергіту сәті 🌻</h1>
+  <button id="start-btn">Бастау</button>
+  <div id="game-board"></div>
+
+  <div id="modal">
+    <div id="modal-content">
+      <!-- Текст будет меняться динамически -->
+      <p id="modal-text">Қате кетті 😢</p>
+      <button id="restart-btn">Басынан бастау</button>
+    </div>
+  </div>
+
+  <script>
+    // === ЗВУКОВАЯ СИСТЕМА ===
+    let audioContext = null;
+    let soundsEnabled = false;
+
+    function initAudio() {
+      if (audioContext) return;
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        soundsEnabled = true;
+      } catch (e) {
+        console.warn("Web Audio не поддерживается");
+        soundsEnabled = false;
+      }
+    }
+
+    function playTone(frequency, duration = 0.15, type = 'sine', gain = 0.2) {
+      if (!soundsEnabled) return;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      gainNode.gain.value = gain;
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+
+    function playCorrect() {
+      playTone(600, 0.2, 'sine', 0.15);
+    }
+
+    function playError() {
+      if (!soundsEnabled) return;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(200, audioContext.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(60, audioContext.currentTime + 0.4);
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.4);
+    }
+
+    function playWin() {
+      if (!soundsEnabled) return;
+      const notes = [523, 659, 784];
+      notes.forEach((freq, i) => {
+        setTimeout(() => playTone(freq, 0.15, 'sine', 0.2), i * 150);
+      });
+    }
+
+    // === ИГРОВАЯ ЛОГИКА ===
+    const board = document.getElementById('game-board');
+    const startBtn = document.getElementById('start-btn');
+    const modal = document.getElementById('modal');
+    const modalText = document.getElementById('modal-text');
+    const restartBtn = document.getElementById('restart-btn');
+
+    let numbers = [];
+    let gameStarted = false;
+    let nextExpected = 1;
+
+    function initBoard() {
+      board.innerHTML = '';
+      numbers = [...Array(9)].map((_, i) => i + 1);
+      shuffle(numbers);
+
+      numbers.forEach(num => {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.value = num;
+        cell.textContent = num;
+        cell.addEventListener('click', handleCellClick);
+        board.appendChild(cell);
+      });
+
+      gameStarted = false;
+      nextExpected = 1;
+      startBtn.disabled = false;
+      startBtn.textContent = 'Бастау';
+    }
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+    }
+
+    function handleCellClick(e) {
+      if (!gameStarted) return;
+      const cell = e.target;
+      if (cell.classList.contains('revealed')) return;
+
+      const value = parseInt(cell.dataset.value);
+
+      if (value === nextExpected) {
+        playCorrect();
+        cell.classList.remove('hidden');
+        cell.classList.add('revealed');
+        nextExpected++;
+
+        if (nextExpected > 9) {
+          setTimeout(() => {
+            playWin();
+            showWinModal();
+          }, 400);
+        }
+      } else {
+        playError();
+        showErrorModal();
+      }
+    }
+
+    function showErrorModal() {
+      modalText.textContent = 'Қате кетті 😢';
+      modal.style.display = 'flex';
+    }
+
+    function showWinModal() {
+      modalText.textContent = 'Ура! Ты всё запомнил! 🌟';
+      modal.style.display = 'flex';
+    }
+
+    function hideModal() {
+      modal.style.display = 'none';
+    }
+
+    startBtn.addEventListener('click', () => {
+      initAudio();
+      document.querySelectorAll('.cell').forEach(cell => {
+        cell.classList.add('hidden');
+        cell.classList.remove('revealed');
+      });
+      gameStarted = true;
+      startBtn.disabled = true;
+      startBtn.textContent = 'Игра идёт...';
+    });
+
+    restartBtn.addEventListener('click', () => {
+      hideModal();
+      initBoard();
+    });
+
+    initBoard();
+  </script>
+</body>
+</html>
